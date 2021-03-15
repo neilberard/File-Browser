@@ -8,11 +8,6 @@ import json
 import logging
 import traceback
 import subprocess
-import copy
-
-
-
-
 
 
 logging.basicConfig()
@@ -41,6 +36,9 @@ BROWSERS = "browsers"
 PIN_LISTS = "pin_lists"
 PIN_LIST_DATA = "pin_list_data"
 NAME = "name"
+FAV_WIDGET_NAME = "fav_widget_name"
+FAV_WIDGET_PINS = 'fav_widget_pins'
+
 
 
 class AbstractDockWindow:
@@ -114,6 +112,7 @@ class DockWindow(AbstractDockWindow, QtWidgets.QWidget):
         self.setLayout(QtWidgets.QHBoxLayout())
         self.layout().addWidget(self.splitter)
         self._active = None
+        self.layout().setContentsMargins(0,0,0,0)
 
 
     def set_active(self, *args):
@@ -153,7 +152,10 @@ class DockWidget(QtWidgets.QDockWidget):
         self.setWidget(browser_window)
         self.setWindowTitle(browser_window._leaf)
         self.setFeatures(QtWidgets.QDockWidget.DockWidgetClosable)
-        self.setContentsMargins(0,0,0,0)
+
+
+    # def dragEnterEvent(self, event):
+    #     print("Doc Drag!")
 
     def closeEvent(self, event):
         self.browser_window.setParent(None)
@@ -231,10 +233,14 @@ class BaseListWidget(QtWidgets.QListWidget):
         self._context_menu.exec_(self.mapToGlobal(pos))
 
 
-class PinTreeWidget(QtWidgets.QTreeWidget):
-    def __init__(self):
+class FavWidget(QtWidgets.QTreeWidget):
+    def __init__(self, items=None, name=""):
         super().__init__()
+
+        # Serializable Data
         self._items = []
+        self.setObjectName(name)
+
         self.setAcceptDrops(True)
         self.setDragEnabled(True)
         self.setSelectionMode(QtWidgets.QAbstractItemView.ExtendedSelection)
@@ -247,17 +253,24 @@ class PinTreeWidget(QtWidgets.QTreeWidget):
         self.header().resizeSection(0, 3)
         # self.setAlternatingRowColors(True)
 
-        # self.header().hide()
+        self.header().hide()
         self.setIndentation(0)
 
 
         self.add_menu_actions()
+
+        if items:
+            for i in items:
+                self.add_pin(i)
 
     def add_pin(self, item_data):
         new_pin = FileTreeItemWidget(item_data)
         self._items.append(new_pin)
         self.addTopLevelItem(new_pin)
         self.setItemSelected(new_pin, True)
+
+    def pins(self):
+        return self._items
 
     def dropEvent(self, event):
         message = MainWindow().get_drag_message()
@@ -275,7 +288,6 @@ class PinTreeWidget(QtWidgets.QTreeWidget):
 
         MainWindow().set_drag_message(None)
         MainWindow().is_dragging = False
-
 
     def add_menu_actions(self):
         rename_pin = self._context_menu.addAction("Rename Pin")
@@ -329,7 +341,6 @@ class PinListWidget(BaseListWidget):
                 self.add_pin(i)
         if widget_data:
             self.__dict__.update(widget_data)
-
 
     def open(self):
         item = self.currentItem()
@@ -597,7 +608,11 @@ class MainWindow(QtWidgets.QMainWindow):
         self.is_dragging = False
 
         # Style
-        self.setStyleSheet("QGroupBox {border: 0px}")
+        # self.setStyleSheet("QGroupBox {border: 0px;}\n"
+        #                    "QWidget {background-color: #31363b;"
+        #                    "padding: 0 0 0 0;"
+        #                    "border-spacing: 0px 0px;"
+        #                    "margin: 0px;}")
 
         self._browser_widgets_list = []
         self._active = None
@@ -622,8 +637,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self.tool_bar.setLayout(QtWidgets.QHBoxLayout())
         self.c_layout.addWidget(self.tool_bar)
         self.tool_bar.setMaximumHeight(TOOL_BAR_BUTTON_WIDTH)
-        self.centralWidget().layout().setContentsMargins(0,0,0,0)
-        self.tool_bar.layout().setContentsMargins(3,3,3,3)
+        # self.centralWidget().layout().setContentsMargins(0,0,0,0)
+        # self.tool_bar.layout().setContentsMargins(3,3,3,3)
 
 
         # Back Button
@@ -651,9 +666,9 @@ class MainWindow(QtWidgets.QMainWindow):
         self.tool_bar.layout().addWidget(self.view_toggle_btn)
 
         # View Mode
-        self.browser_context_combo = QtWidgets.QComboBox()
-        self.browser_context_combo.addItem(DOCK_WIDGET_VIEW_MODE)
-        self.browser_context_combo.addItem(TAB_VIEW_MODE)
+        # self.browser_context_combo = QtWidgets.QComboBox()
+        # self.browser_context_combo.addItem(DOCK_WIDGET_VIEW_MODE)
+        # self.browser_context_combo.addItem(TAB_VIEW_MODE)
         # self.tool_bar.layout().addWidget(self.browser_context_combo)
 
         # Open Tab
@@ -712,16 +727,8 @@ class MainWindow(QtWidgets.QMainWindow):
 
 
         self.open_tab_btn.clicked.connect(self.add_browser)
-        self.browser_context_combo.currentIndexChanged.connect(self.set_view_context)
+        # self.browser_context_combo.currentIndexChanged.connect(self.set_view_context)
         self.view_toggle_btn.clicked.connect(self.toggle_view_context)
-
-        # TODO: Add load save data here.
-
-        # Make sure we have at least one pin list
-        if not self.pin_combo.count():
-            self.add_pin_tray()
-
-
 
         # init
         self._initialized = True
@@ -731,10 +738,10 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def add_pin_combo_menu_actions(self):
         add_tray = self._pin_combo_context_menu.addAction("Add Pin List")
-        add_tray.triggered.connect(self.new_tray_dialog)
+        add_tray.triggered.connect(self.new_fav_list_dialog)
 
         rename_tray = self._pin_combo_context_menu.addAction("Rename Pin List")
-        rename_tray.triggered.connect(self.rename_tray_dialog)
+        rename_tray.triggered.connect(self.rename_fav_list_dialog)
 
 
         delete_tray = self._pin_combo_context_menu.addAction("Delete Pin List")
@@ -751,34 +758,41 @@ class MainWindow(QtWidgets.QMainWindow):
         dialog.accepted.connect(func)
         dialog.show()
 
-    def new_tray_dialog(self):
+    def new_fav_list_dialog(self):
         dialog = QtWidgets.QInputDialog(self)
         dialog.setWindowTitle("New pin list")
         dialog.setLabelText("List name")
-        func = lambda : self.add_pin_tray(widget_data={NAME: dialog.textValue()})
+        func = lambda : self.add_fav_list(widget_data={NAME: dialog.textValue()})
         dialog.accepted.connect(func)
         dialog.move(self.pin_combo.mapToGlobal(self.pin_combo.pos()))
         dialog.show()
 
-    def rename_tray_dialog(self):
+    def set_fav_list_name(self, idx, name):
+        self.pin_combo.setItemText(idx, name)
+        fav_widget = self.pin_combo.itemData(idx)
+        fav_widget.setObjectName(name)
+
+
+    def rename_fav_list_dialog(self):
         dialog = QtWidgets.QInputDialog(self)
         dialog.setWindowTitle("Rename pin list")
         dialog.setLabelText("New name")
         dialog.setTextValue(self.pin_combo.currentText())
 
-        func = lambda: self.pin_combo.setItemText(self.pin_combo.currentIndex(),dialog.textValue())
+        func = lambda: self.set_fav_list_name(self.pin_combo.currentIndex(),dialog.textValue())
         dialog.accepted.connect(func)
+
         dialog.move(self.pin_combo.mapToGlobal(self.pin_combo.pos()))
         dialog.show()
 
-    def set_view_context(self):
+    def set_view_context(self, context=DOCK_WIDGET_VIEW_MODE):
         if self._browser_context:
             self._browser_context.clear_widgets()
             self._browser_context.hide()
 
-        if self.browser_context_combo.currentText() == DOCK_WIDGET_VIEW_MODE:
+        if context == DOCK_WIDGET_VIEW_MODE:
             self._browser_context = self.dock_widget
-        elif self.browser_context_combo.currentText() == TAB_VIEW_MODE:
+        elif context == TAB_VIEW_MODE:
             self._browser_context = self.tab_widget
 
         self._browser_context.show()
@@ -813,38 +827,40 @@ class MainWindow(QtWidgets.QMainWindow):
         self._pin_context.show()
 
     def save_pin_lists(self):
-        pass
-        # save_data = {}
-        # browser_data = {}
-        # for num, b in enumerate(self._browser_widgets_list):
-        #     browser_data["browser_" + str(num)] = serialize(b)
-        #
-        # pin_list_data = {}
-        #
-        # for num in range(self.pin_combo.count()):
-        #     pin_list = self.pin_combo.itemData(num)
-        #
-        #     pin_list_items = []
-        #     for idx in range(pin_list.count()):
-        #         item = pin_list.item(idx)
-        #         pin_list_items.append(serialize(item))
-        #
-        #     pin_list_data[str(num) + "_pinlist_" + pin_list.name] = pin_list_items
-        #
-        # if not os.path.exists(os.path.dirname(SETTINGS_PATH)):
-        #     os.makedirs(os.path.dirname(SETTINGS_PATH))
-        #
-        #
-        # save_data[PIN_LISTS] = pin_list_data
-        # save_data[BROWSERS] = browser_data
-        # print("Saving Pin List data {}".format(save_data))
-        #
-        #
-        # with open(SETTINGS_PATH, 'w') as f:
-        #     json.dump(save_data, f)
+        save_data = {}
+        browser_data = {}
+        for num, b in enumerate(self._browser_widgets_list):
+            browser_data["browser_" + str(num)] = serialize(b)
+
+        pin_list_data = {}
+
+        for num in range(self.pin_combo.count()):
+            fav_list = self.pin_combo.itemData(num)
+            assert isinstance(fav_list, FavWidget)
+
+            pin_list_items = []
+            for i in fav_list.pins():
+                pin_list_items.append(serialize(i))
+
+            key = 'fav_list_' + fav_list.objectName() + str(num)
+            pin_list_data[key] = {FAV_WIDGET_NAME : fav_list.objectName(),
+                                  FAV_WIDGET_PINS : pin_list_items}
+
+
+        if not os.path.exists(os.path.dirname(SETTINGS_PATH)):
+            os.makedirs(os.path.dirname(SETTINGS_PATH))
+
+
+        save_data[PIN_LISTS] = pin_list_data
+        save_data[BROWSERS] = browser_data
+        print("Saving Pin List data {} \n {}".format(SETTINGS_PATH, save_data))
+
+
+        with open(SETTINGS_PATH, 'w') as f:
+            json.dump(save_data, f)
 
     def load_saved_data(self):
-        return
+
 
         if os.path.exists(SETTINGS_PATH):
             with open(SETTINGS_PATH, 'r') as f:
@@ -854,12 +870,16 @@ class MainWindow(QtWidgets.QMainWindow):
             return
 
         # Load browsers
-        for k, v in self._save_data[BROWSERS].items():
-            self.add_browser(v)
+        # for k, v in self._save_data[BROWSERS].items():
+        #     self.add_browser(v)
 
         for k, v in self._save_data[PIN_LISTS].items():
-            self.pin_combo.addItem(k)
-            self.add_pin_tray(pin_data=v)
+            print("loading fav list {} \n {}".format(k, v))
+            self.add_fav_list(items=v[FAV_WIDGET_PINS], name=v[FAV_WIDGET_NAME])
+
+        # Make sure we have at least one pin list
+        if not self.pin_combo.count():
+            self.add_fav_list()
 
 
 
@@ -872,26 +892,24 @@ class MainWindow(QtWidgets.QMainWindow):
         self.pin_combo.removeItem(idx)
         widget.deleteLater()
 
-    def add_pin_tray(self, items=None, widget_data=None):
+    def add_fav_list(self, items=None, widget_data=None, name=""):
         """
-        :param items:
+        :param items: list
         :param widget_data: Serialized class data
+        :param name: str
         :return:
         """
 
-        name = ""
-        new_list = PinTreeWidget()
-        # TODO Temp code
-        new_list.addTopLevelItem(FileTreeItemWidget({'full_path': 'C:/'}))
+        fav_widget = FavWidget(items, name=name)
 
-        # new_list = PinListWidget(items, widget_data)
-        if widget_data and NAME in widget_data.keys():
-            name = widget_data[NAME]
-        else:
-            name = "Pin List {}".format(self.pin_combo.count())
+        if not name:
+            if widget_data and NAME in widget_data.keys():
+                name = widget_data[NAME]
+            else:
+                name = "Pin List {}".format(self.pin_combo.count())
 
-        self.pin_combo.addItem(name, new_list)
-        self.pin_grp.layout().addWidget(new_list)
+        self.pin_combo.addItem(name, fav_widget)
+        self.pin_grp.layout().addWidget(fav_widget)
         self.pin_combo.setCurrentIndex(self.pin_combo.count() -1)
 
     def set_active_pin_tray(self, tray):
@@ -956,8 +974,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.save_pin_lists()
 
     def showEvent(self, *args):
-        # self.load_saved_data()
-        pass
+        self.load_saved_data()
 
 
 class BrowserWidget(QtWidgets.QWidget):
@@ -1077,13 +1094,11 @@ def serialize(obj):
     return obj_data
 
 
-
-
-
-
-
-
-
+def set_theme(app, stylesheet_path):
+    file = QtCore.QFile(stylesheet_path)
+    file.open(QtCore.QFile.ReadOnly | QtCore.QFile.Text)
+    stream = QtCore.QTextStream(file)
+    app.setStyleSheet(stream.readAll())
 
 
 
@@ -1096,10 +1111,13 @@ if __name__ == '__main__':
     window.resize(800, 500)
 
     window.setWindowTitle('File Browser')
+    window.set_view_context(DOCK_WIDGET_VIEW_MODE)
     window.show()
-    window.set_view_context()
+
+    # window.set_view_context()
     window.add_browser({FULL_PATH: TEST_PATH})
 
+    STYLE_SHEET_PATH = "./stylesheets/light_theme.css"
+    # set_theme(app, STYLE_SHEET_PATH)
 
     sys.exit(app.exec_())
-    pass

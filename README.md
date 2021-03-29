@@ -10,3 +10,4 @@ Regex searching of all browser windows and saved lists.
 Color code lists.
 Sorting by Alphebitical / Most accessed.
 Add icon flags to saved pins.
+Dark Mode.

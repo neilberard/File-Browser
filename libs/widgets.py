@@ -148,7 +148,7 @@ class FileItem:
 
         self.file_info = QtCore.QFileInfo(self.full_path)
         self.file_name = self.file_info.fileName()
-        
+
     def file_path(self):
         return self.full_path
 

@@ -170,8 +170,12 @@ class FavWidget(QtWidgets.QListWidget):
 
     def delete_pins(self):
         for i in self.selectedItems():
+            print(i)
+            print(self._items)
             self._items.remove(i)
-            self.takeTopLevelItem(self.indexOfTopLevelItem(i))
+            self.indexFromItem(i)
+            self.takeItem(self.row(i))
+            # self.takeTopLevelItem(self.indexOfTopLevelItem(i))
 
     def mousePressEvent(self, event):
         super().mousePressEvent(event)

@@ -1,14 +1,17 @@
-from PySide2 import QtWidgets, QtCore, QtGui, QtSvg
-from PySide2.QtCore import Signal
-import shutil
-import abc
-import os
-import sys
 import json
 import logging
-import traceback
+import os
+import shutil
 import subprocess
+import sys
+import traceback
 
+from PySide2 import QtWidgets, QtCore, QtGui
+
+
+from libs import widgets
+
+from libs.widgets import TabWindow, DockWindow, FileItemWidget, FavItemWidget
 
 logging.basicConfig()
 log = logging.getLogger(__name__)
@@ -38,137 +41,6 @@ PIN_LIST_DATA = "pin_list_data"
 NAME = "name"
 FAV_WIDGET_NAME = "fav_widget_name"
 FAV_WIDGET_PINS = 'fav_widget_pins'
-
-
-
-class AbstractDockWindow:
-    @abc.abstractmethod
-    def add_widget(self, browser_window, path=None):
-        pass
-    @abc.abstractmethod
-    def set_title(self, title):
-        pass
-    @abc.abstractmethod
-    def populate(self):
-        pass
-
-    @abc.abstractmethod
-    def clear_widgets(self):
-        pass
-
-    @abc.abstractmethod
-    def remove_widget(self, *args):
-        pass
-
-
-class TabWindow(AbstractDockWindow, QtWidgets.QTabWidget):
-
-    def __init__(self):
-        super().__init__()
-
-        self.dir_path = ""
-
-        self.setAcceptDrops(True)
-        self.setTabsClosable(True)
-        self.tabCloseRequested.connect(self.close_tab)
-        self.currentChanged.connect(self.set_active)
-
-    def set_title(self, title):
-        idx = self.indexOf(MainWindow().get_active_browser())
-        self.setTabText(idx, title)
-
-    def add_widget(self, browser_window, path=None, set_current=True):
-        self.addTab(browser_window, browser_window.windowTitle())
-        if set_current:
-            self.setCurrentWidget(browser_window)
-            MainWindow().set_active_browser(browser_window)
-
-    def populate(self):
-        self.blockSignals(True)
-        for w in MainWindow().get_browser_list():
-            self.add_widget(w, set_current=False)
-        self.setCurrentWidget(MainWindow().get_active_browser())
-        self.blockSignals(False)
-
-    def remove_widget(self, widget):
-        self.removeTab(self.indexOf(widget))
-
-    def close_tab(self, *args):
-        MainWindow().remove_browser(self.widget(args[0]))
-
-    def clear_widgets(self):
-        self.blockSignals(True)
-        self.clear()
-        self.blockSignals(False)
-
-    def set_active(self):
-        MainWindow().set_active_browser(self.currentWidget())
-
-
-class DockWindow(AbstractDockWindow, QtWidgets.QWidget):
-    def __init__(self):
-        super().__init__()
-        self.splitter = QtWidgets.QSplitter()
-        self.setLayout(QtWidgets.QHBoxLayout())
-        self.layout().addWidget(self.splitter)
-        self._active = None
-        self.layout().setContentsMargins(0,0,0,0)
-
-
-    def set_active(self, *args):
-        pass
-
-    def set_title(self, title):
-        dock = MainWindow().get_active_browser()
-        if dock:
-            dock.parent().setWindowTitle(title)
-
-    def add_widget(self, browser_window, path=None, set_current=True):
-        dock_widget = DockWidget(browser_window)
-        dock_widget.closed_event.connect(MainWindow().remove_browser)
-        self.splitter.addWidget(dock_widget)
-
-    def remove_widget(self, dock_widget):
-        MainWindow().remove_browser(dock_widget)
-
-    def populate(self):
-        for w in MainWindow().get_browser_list():
-            self.add_widget(w)
-
-    def clear_widgets(self):
-        for dock in self.findChildren(DockWidget):
-            dock.release_browser()
-
-    def get_active(self, *args):
-        return self._active
-
-
-class DockWidget(QtWidgets.QDockWidget):
-    closed_event = Signal(QtWidgets.QDockWidget)
-
-    def __init__(self, browser_window):
-        super().__init__()
-        self.browser_window = browser_window
-        self.setWidget(browser_window)
-        self.setWindowTitle(browser_window._leaf)
-        self.setFeatures(QtWidgets.QDockWidget.DockWidgetClosable)
-
-
-    # def dragEnterEvent(self, event):
-    #     print("Doc Drag!")
-
-    def closeEvent(self, event):
-        self.browser_window.setParent(None)
-        self.hide()
-        self.setParent(None)
-        self.setWidget(None)
-        self.closed_event.emit(self.browser_window)
-        super().closeEvent(event)
-
-    def release_browser(self):
-        self.browser_window.setParent(None)
-        self.setWidget(None)
-        self.deleteLater()
 
 
 class BaseListWidget(QtWidgets.QListWidget):
@@ -221,7 +93,6 @@ class BaseListWidget(QtWidgets.QListWidget):
     def copy_path(self):
         subprocess.run("clip", universal_newlines=True, input=self.currentItem().file_path())
 
-
     def open_in_new_tab(self):
         item = self.currentItem()
         if item.is_dir():
@@ -233,7 +104,7 @@ class BaseListWidget(QtWidgets.QListWidget):
         self._context_menu.exec_(self.mapToGlobal(pos))
 
 
-class FavWidget(QtWidgets.QTreeWidget):
+class FavWidget(QtWidgets.QListWidget):
     def __init__(self, items=None, name=""):
         super().__init__()
 
@@ -249,12 +120,12 @@ class FavWidget(QtWidgets.QTreeWidget):
         self.customContextMenuRequested.connect(self.show_context_menu)
 
 
-        self.setColumnCount(2)
-        self.header().resizeSection(0, 3)
+        # self.setColumnCount(1)
+        # self.header().resizeSection(0, 3)
         # self.setAlternatingRowColors(True)
 
-        self.header().hide()
-        self.setIndentation(0)
+        # self.header().hide()
+        # self.setIndentation(0)
 
 
         self.add_menu_actions()
@@ -264,9 +135,9 @@ class FavWidget(QtWidgets.QTreeWidget):
                 self.add_pin(i)
 
     def add_pin(self, item_data):
-        new_pin = FileTreeItemWidget(item_data)
+        new_pin = FavItemWidget(item_data)
         self._items.append(new_pin)
-        self.addTopLevelItem(new_pin)
+        self.addItem(new_pin)
         self.setItemSelected(new_pin, True)
 
     def pins(self):
@@ -425,7 +296,6 @@ class FileListWidget(BaseListWidget):
 
 
         self.directory = ""
-        self.icon_provider = QtWidgets.QFileIconProvider()
         self._dragging = False
 
         # What do we want to do with the dropped file
@@ -515,69 +385,104 @@ class PathLineEdit(QtWidgets.QLineEdit):
     #     print("Dragging! {}".format(type(self).__name__))
 
 
-class FileTreeItemWidget(QtWidgets.QTreeWidgetItem):
-    file_info = QtCore.QFileInfo()
+class BrowserWidget(QtWidgets.QWidget):
 
-    def __init__(self, item_data: dict):
+    def __init__(self, main_window, browser_data=None):
         super().__init__()
-        # self.__dict__.update(item_data)
-        self.full_path = item_data['full_path']
+        self.MainWindow = main_window
+
+        # Data
+        self._leaf = ""
+        self._full_path = ""
+
+        self._active = False
+
+        # History
+        self.history = []
+        self.history_idx = 0
+
+        self.central_layout = QtWidgets.QVBoxLayout()
+        self.setLayout(self.central_layout)
+        self.layout().setContentsMargins(0,5,0,0)
 
 
-        self.file_info = QtCore.QFileInfo(self.full_path)
-        self.file_name = self.file_info.fileName()
+        # BROWSER PATH
+        self.path_line_edit = PathLineEdit()
+        self.central_layout.addWidget(self.path_line_edit)
+        self.list_view = FileListWidget()
+        self.central_layout.addWidget(self.list_view)
+
+        # SIGNAL
+        self.path_line_edit.textEdited.connect(self.set_path_edit)
 
 
-        if 'nice_name' not in self.__dict__.keys():
-            self.nice_name = self.file_name
-        self.setText(1, self.__dict__['nice_name'])
 
-        icon_provider = QtWidgets.QFileIconProvider()
-        icon = icon_provider.icon(self.file_info)
-        self.setIcon(1, icon)
-        self.setToolTip(1, self.full_path)
+        if browser_data:
+            self.__dict__.update(browser_data)
+        #     self.set_path(self._full_path, is_dir=True)
+        # else:
+        #     self.set_path("c:/", is_dir=True)
 
-        self.setIcon(0, QtGui.QIcon(os.path.join(ICON_PATH, "circle-solid.svg")))
+    def set_path_edit(self):
+        path = self.path_line_edit.text()
+        if os.path.isdir(self.path_line_edit.text()):
+            self.set_path(path, is_dir=True, set_text=False)
+
+    def set_path(self, path, is_dir=False, history=True, set_text=True):
+
+        self._leaf = os.path.split(path)[-1]
+        self._full_path = path
+        if not self._leaf:
+            self._leaf = self._full_path
+
+        self.setWindowTitle(self._leaf)
+
+        if is_dir:
+            self.list_view.set_root_directory(path)
+            if set_text:
+                self.path_line_edit.setText(path)
 
 
-    def is_dir(self):
-        return self.file_info.isDir()
+            # TODO: This is ugly, make it clean.
+            if history and not self.history or history and self.history[-1] != path:
+                self.history.append(path)
+                self.history_idx = len(self.history) -1
+            self.MainWindow().set_active_browser_title(self._leaf)
 
-    def file_path(self):
-        return self.full_path
+    def get_path(self):
+        return self._full_path
 
+    def back(self):
+        if self.history_idx > 0:
+            self.history_idx -= 1
+            self.set_path(self.history[self.history_idx], is_dir=True, history=False)
 
-class FileItemWidget(QtWidgets.QListWidgetItem):
-    """
-    This widget stores all information on a file path.
-    """
+    def forward(self):
+        if self.history_idx < (len(self.history) -1):
+            self.history_idx += 1
+            self.set_path(self.history[self.history_idx], is_dir=True, history=False)
 
-    file_info = QtCore.QFileInfo()
+    def up(self):
+        new_dir = os.path.dirname(self._full_path)
+        self.set_path(new_dir, is_dir=True)
 
+    def pin_item(self):
+        item = self.list_view.currentItem()
+        self.MainWindow().pin_list.add_pin(item.file_path())
 
-    def __init__(self, item_data: dict):
-        super().__init__()
+    def set_dir(self):
+        item = self.list_view.currentItem()
+        self.set_path(item.file_path(), is_dir=item.file_info.isDir())
 
-        self.__dict__.update(item_data)
-        self.file_info = QtCore.QFileInfo(self.full_path)
-        self.file_name = self.file_info.fileName()
+    def mouseDoubleClickEvent(self, event):
+        self.set_dir()
+        self.set_active(True)
 
-        if 'nice_name' not in self.__dict__.keys():
-            self.nice_name = self.file_name
+    def set_active(self, active:bool):
+        self.MainWindow().set_active_browser(self)
 
-        self.setText(self.__dict__['nice_name'])
-
-        icon_provider = QtWidgets.QFileIconProvider()
-        icon = icon_provider.icon(self.file_info)
-        self.setIcon(icon)
-
-        self.setToolTip(self.full_path)
-
-    def file_path(self):
-        return self.full_path
-
-    def is_dir(self):
-        return self.file_info.isDir()
+    def mouseMoveEvent(self, event):
+        print("Move!")
 
 
 class MainWindow(QtWidgets.QMainWindow):
@@ -592,6 +497,10 @@ class MainWindow(QtWidgets.QMainWindow):
     _pin_context = None
     _drag_message = None
     _save_data = None
+    _filter = None
+
+    # Slots
+    apply_filter = QtCore.Signal(str, dict)
 
 
     def __new__(cls):
@@ -603,6 +512,9 @@ class MainWindow(QtWidgets.QMainWindow):
         if self._initialized:
             return
         super().__init__()
+
+        # Custom Signals
+
 
         # Prevent multiple widgets from entering a drag event.
         self.is_dragging = False
@@ -622,11 +534,11 @@ class MainWindow(QtWidgets.QMainWindow):
         self.c_layout = self.centralWidget().layout()
 
         # Tab Widget
-        self.tab_widget = TabWindow()
+        self.tab_widget = TabWindow(MainWindow)
         self.tab_widget.hide()
 
         # Dock Widget
-        self.dock_widget = DockWindow()
+        self.dock_widget = DockWindow(MainWindow)
         self.dock_widget.hide()
 
         # Initial Context
@@ -637,8 +549,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.tool_bar.setLayout(QtWidgets.QHBoxLayout())
         self.c_layout.addWidget(self.tool_bar)
         self.tool_bar.setMaximumHeight(TOOL_BAR_BUTTON_WIDTH)
-        # self.centralWidget().layout().setContentsMargins(0,0,0,0)
-        # self.tool_bar.layout().setContentsMargins(3,3,3,3)
+
 
 
         # Back Button
@@ -676,7 +587,17 @@ class MainWindow(QtWidgets.QMainWindow):
         self.open_tab_btn.setMaximumWidth(TOOL_BAR_BUTTON_WIDTH)
         self.open_tab_btn.setIcon(QtGui.QIcon(os.path.join(ICON_PATH, "plus-circle.svg")))
         self.tool_bar.layout().addWidget(self.open_tab_btn)
+
+
+        # Search Bar
+        self.search_ln_edit = QtWidgets.QLineEdit()
+        self.tool_bar.layout().addWidget(self.search_ln_edit)
+        self.search_ln_edit.textChanged.connect(self.set_search_filter)
+        self.apply_filter.connect(self.test_emit)
+
+
         self.tool_bar.layout().addStretch()
+
 
         # Fav Toggle
         self.hamburger_btn = QtWidgets.QPushButton()
@@ -733,6 +654,17 @@ class MainWindow(QtWidgets.QMainWindow):
         # init
         self._initialized = True
 
+        # Data
+        self._filter = None
+
+
+    def set_search_filter(self):
+        # print(self.search_ln_edit.text())
+        self.apply_filter.emit(self.search_ln_edit.text(), {})
+
+    def test_emit(self, *args):
+        print("Got Filter signal {}".format(args))
+
     def show_pin_combo_context_menu(self, pos):
         self._pin_combo_context_menu.exec_(self.pin_combo.mapToGlobal(pos))
 
@@ -771,7 +703,6 @@ class MainWindow(QtWidgets.QMainWindow):
         self.pin_combo.setItemText(idx, name)
         fav_widget = self.pin_combo.itemData(idx)
         fav_widget.setObjectName(name)
-
 
     def rename_fav_list_dialog(self):
         dialog = QtWidgets.QInputDialog(self)
@@ -924,7 +855,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._browser_context.set_title(title)
 
     def add_browser(self, browser_data=None):
-        browser_window = BrowserWidget(browser_data)
+        browser_window = BrowserWidget(MainWindow, browser_data=browser_data)
         self._browser_widgets_list.append(browser_window)
         self._browser_context.add_widget(browser_window)
         self.set_active_browser(browser_window)
@@ -977,103 +908,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.load_saved_data()
 
 
-class BrowserWidget(QtWidgets.QWidget):
 
-    def __init__(self, browser_data=None):
-        super().__init__()
-
-        # Data
-        self._leaf = ""
-        self._full_path = ""
-
-        self._active = False
-
-        # History
-        self.history = []
-        self.history_idx = 0
-
-        self.central_layout = QtWidgets.QVBoxLayout()
-        self.setLayout(self.central_layout)
-        self.layout().setContentsMargins(0,5,0,0)
-
-
-        # BROWSER PATH
-        self.path_line_edit = PathLineEdit()
-        self.central_layout.addWidget(self.path_line_edit)
-        self.list_view = FileListWidget()
-        self.central_layout.addWidget(self.list_view)
-
-        # SIGNAL
-        self.path_line_edit.textEdited.connect(self.set_path_edit)
-
-        if browser_data:
-            self.__dict__.update(browser_data)
-        #     self.set_path(self._full_path, is_dir=True)
-        # else:
-        #     self.set_path("c:/", is_dir=True)
-
-    def set_path_edit(self):
-        path = self.path_line_edit.text()
-        if os.path.isdir(self.path_line_edit.text()):
-            self.set_path(path, is_dir=True, set_text=False)
-
-    def set_path(self, path, is_dir=False, history=True, set_text=True):
-
-        self._leaf = os.path.split(path)[-1]
-        self._full_path = path
-        if not self._leaf:
-            self._leaf = self._full_path
-
-        self.setWindowTitle(self._leaf)
-
-        if is_dir:
-            self.list_view.set_root_directory(path)
-            if set_text:
-                self.path_line_edit.setText(path)
-
-
-            # TODO: This is ugly, make it clean.
-            if history and not self.history or history and self.history[-1] != path:
-                self.history.append(path)
-
-                print(self.history)
-                self.history_idx = len(self.history) -1
-            MainWindow().set_active_browser_title(self._leaf)
-
-    def get_path(self):
-        return self._full_path
-
-    def back(self):
-        if self.history_idx > 0:
-            self.history_idx -= 1
-            self.set_path(self.history[self.history_idx], is_dir=True, history=False)
-
-    def forward(self):
-        if self.history_idx < (len(self.history) -1):
-            self.history_idx += 1
-            self.set_path(self.history[self.history_idx], is_dir=True, history=False)
-
-    def up(self):
-        new_dir = os.path.dirname(self._full_path)
-        self.set_path(new_dir, is_dir=True)
-
-    def pin_item(self):
-        item = self.list_view.currentItem()
-        MainWindow().pin_list.add_pin(item.file_path())
-
-    def set_dir(self):
-        item = self.list_view.currentItem()
-        self.set_path(item.file_path(), is_dir=item.file_info.isDir())
-
-    def mouseDoubleClickEvent(self, event):
-        self.set_dir()
-        self.set_active(True)
-
-    def set_active(self, active:bool):
-        MainWindow().set_active_browser(self)
-
-    def mouseMoveEvent(self, event):
-        print("Move!")
 
 
 def serialize(obj):

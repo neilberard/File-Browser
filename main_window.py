@@ -1,9 +1,8 @@
 """
 @Author Neil Berard
-Entry point for File-Browser. Create a Main_Window and show it.
+Entry point for File-Browser. Create a MainWindow and show it.
 """
-
-
+import functools
 import json
 import logging
 import os
@@ -11,29 +10,39 @@ import sys
 import time
 import traceback
 
+
 from PySide2 import QtWidgets, QtCore, QtGui
 
 from libs import utils
-from libs.widgets import TabWindow, DockWindow, BrowserWidget, FavWidget, FileItemWidget, FileItem
+from libs.widgets import TabWindow, DockWindow, BrowserWidget, FavWidget, FileItem
+from libs.consts import *
 
 logging.basicConfig()
 log = logging.getLogger(__name__)
 log.setLevel(logging.DEBUG)
 
-TOOL_BAR_BUTTON_WIDTH = 40
 
-DIRECTORY = os.path.split(os.path.dirname(__file__))[-1]
-SETTINGS_PATH = os.path.join(os.environ['APPDATA'], DIRECTORY, 'data', 'save_data.json')
-TEST_PATH = 'C:/Users/Neil/Desktop'
 
-ICON_PATH = os.path.dirname(__file__) + "/icons"
+
+if getattr(sys, 'frozen', False):
+    APPLICATION_PATH = os.path.dirname(sys.executable)
+
+else:
+    APPLICATION_PATH = os.path.dirname(__file__)
+
+log.info("APPLICATION_PATH {}".format(APPLICATION_PATH))
+SETTINGS_PATH = os.path.join(os.environ['APPDATA'], APPLICATION_NAME, 'data', 'save_data.json')
+log.info("SETTINGS PATH {}".format(SETTINGS_PATH))
+
+
+ICON_PATH = APPLICATION_PATH + "/icons"
 
 
 DOCK_WIDGET_VIEW_MODE = "Dock Widgets"
 TAB_VIEW_MODE = "Tabs"
 
-ACTIVE_STYLE = "QWidget { background-color: rgba(255, 255, 255, 128);}"
-INACTIVE_STYLE = "QWidget { background-color: rgba(128, 128, 128, 50);}"
+ACTIVE_STYLE = "QWidget { background-color: rgba(255, 255, 255, 128); selection-background-color: rgba(255, 255, 255, 10}"
+INACTIVE_STYLE = "QWidget { background-color: rgba(128, 128, 128, 50);selection-background-color: rgba(255, 255, 255, 50)}"
 
 
 # Save Data keys
@@ -49,7 +58,6 @@ SEARCH_TAB_TITLE = "Search Results"
 MAX_RESULTS = 200
 
 
-CAN_SAVE_SETTINGS = True
 
 
 class MainWindow(QtWidgets.QMainWindow):
@@ -69,7 +77,6 @@ class MainWindow(QtWidgets.QMainWindow):
     # Slots
     apply_filter = QtCore.Signal(str, dict)
 
-
     def __new__(cls):
         if cls._instance is None:
             cls._instance = super().__new__(cls)
@@ -81,7 +88,6 @@ class MainWindow(QtWidgets.QMainWindow):
         super().__init__()
 
         # Custom Signals
-
 
         # Prevent multiple widgets from entering a drag event.
         self.is_dragging = False
@@ -103,14 +109,16 @@ class MainWindow(QtWidgets.QMainWindow):
         self.c_layout = self.centralWidget().layout()
 
         # Tab Widget
-        self.tab_widget = TabWindow(self)
+        self.tab_widget = TabWindow()
+        self.tab_widget.is_closed.connect(self.remove_browser)
         self.tab_widget.hide()
 
         # Dock Widget
-        self.dock_widget = DockWindow(self)
+        self.dock_widget = DockWindow()
+        self.dock_widget.is_closed.connect(self.remove_browser)
         self.dock_widget.hide()
 
-        # Initial Context
+        # Initial Context: Dock or Tabs
         self._browser_context = None
 
         # Tool Bar
@@ -214,7 +222,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.add_fav_combo_menu_actions()
         self.pin_tool_bar.layout().addWidget(self.fav_combo)
         self.pin_tool_bar.layout().setContentsMargins(0,0,0,0)
-        func = lambda : self.set_active_pin_tray(self.fav_combo.itemData(self.fav_combo.currentIndex()))
+        func = lambda: self.set_active_pin_tray(self.fav_combo.itemData(self.fav_combo.currentIndex()))
         self.fav_combo.currentIndexChanged.connect(func)
 
 
@@ -273,11 +281,10 @@ class MainWindow(QtWidgets.QMainWindow):
                     full_path = file_path
                 full_path = full_path.replace("\\", "/")
 
-                print(full_path)
                 if full_path in found_items:
                     return
-                if len(found_items) > 100:
-                    log.info("Hit max 100 results")
+                if len(found_items) > MAX_RESULTS:
+                    log.info("Hit max {} results".format(MAX_RESULTS))
                     self._can_search = False
                     return
 
@@ -298,14 +305,18 @@ class MainWindow(QtWidgets.QMainWindow):
             if i.file_path() in found_items:
                 continue
 
-            check_candidate(self, i.file_name, i.file_path())
+            check_candidate(self, i._file_name, i.file_path())
 
 
             # Search through dirs
             if i.is_dir():
-                log.debug("{} Scanning Directory!".format(i.file_name))
-
+                # progress_callback.emit(i.file_name)
+                log.debug("{} Scanning Directory!".format(i._file_name))
                 for root, dirs, files in os.walk(i.file_path()):
+                    if not self._can_search:
+                        self.active_threads -= 1
+                        return "Search Canceled!"
+
                     # Check DIR
                     for name in files:
                         check_candidate(self, name, root)
@@ -341,8 +352,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.search_ln_edit.clear()
 
     def progress_function(self, n):
-        progress = "." * n
-        self.search_status_lbl.setText(progress)
+        self.search_status_lbl.setText(n)
         # print("Running thread")
 
     def print_output(self, s):
@@ -352,7 +362,6 @@ class MainWindow(QtWidgets.QMainWindow):
         self.search_cancel_btn.hide()
         self.search_status_lbl.hide()
         log.info("Search Completed")
-
 
     def run_search_thread(self):
         """
@@ -462,14 +471,6 @@ class MainWindow(QtWidgets.QMainWindow):
         fav_widget = self.fav_combo.itemData(idx)
         fav_widget.setObjectName(name)
 
-    def get_fav_items(self):
-        items = []
-
-        for num in range(self.fav_combo.count()):
-            fav_list = self.fav_combo.itemData(num)
-            assert isinstance(fav_list, FavWidget)
-            items.extend(fav_list.pins())
-        return items
 
     def save_fav_lists(self):
         save_data = {}
@@ -477,29 +478,29 @@ class MainWindow(QtWidgets.QMainWindow):
         for num, b in enumerate(self._browser_widgets_list):
             browser_data["browser_" + str(num)] = serialize(b)
 
-        pin_list_data = {}
+        pin_list_data = []
 
         for num in range(self.fav_combo.count()):
             fav_list = self.fav_combo.itemData(num)
             assert isinstance(fav_list, FavWidget)
 
             pin_list_items = []
-            for i in fav_list.pins():
+            for i in fav_list.get_items():
                 pin_list_items.append(serialize(i))
 
-            key = 'fav_list_' + fav_list.objectName() + str(num)
-            pin_list_data[key] = {FAV_WIDGET_NAME: fav_list.objectName(),
-                                  FAV_WIDGET_PINS: pin_list_items}
+            pin_list_data.append({FAV_WIDGET_NAME: self.fav_combo.itemText(num),
+                                  FAV_WIDGET_PINS: pin_list_items})
 
         if not os.path.exists(os.path.dirname(SETTINGS_PATH)):
             os.makedirs(os.path.dirname(SETTINGS_PATH))
 
         save_data[PIN_LISTS] = pin_list_data
         save_data[BROWSERS] = browser_data
-        log.debug("Saving Pin List data {} \n {}".format(SETTINGS_PATH, save_data))
+        log.debug("Saving Pin List data {}".format(SETTINGS_PATH))
+        log.debug(save_data)
 
         with open(SETTINGS_PATH, 'w') as f:
-            json.dump(save_data, f)
+            json.dump(save_data, f, indent=4, sort_keys=True)
 
     def set_browser_context(self, context=DOCK_WIDGET_VIEW_MODE):
         log.debug("Setting view context {}".format(context))
@@ -521,7 +522,11 @@ class MainWindow(QtWidgets.QMainWindow):
 
         if refresh:
             self._browser_context.show()
-            self._browser_context.populate()
+
+            for b in self._browser_widgets_list:
+                b.is_closed.connect(self.remove_browser)
+                self._browser_context.add_widget(b)
+
         else:
             log.info("Browser context has not changed. Skipping refresh.")
 
@@ -532,7 +537,6 @@ class MainWindow(QtWidgets.QMainWindow):
             self.set_browser_context(TAB_VIEW_MODE)
 
     def load_saved_data(self):
-
 
         if os.path.exists(SETTINGS_PATH):
             with open(SETTINGS_PATH, 'r') as f:
@@ -545,9 +549,9 @@ class MainWindow(QtWidgets.QMainWindow):
         # for k, v in self._save_data[BROWSERS].items():
         #     self.add_browser(v)
 
-        for k, v in self._save_data[PIN_LISTS].items():
-            print("loading fav list {} \n {}".format(k, v))
-            self.add_fav_list(items=v[FAV_WIDGET_PINS], name=v[FAV_WIDGET_NAME])
+        for i in self._save_data[PIN_LISTS]:
+            print("loading fav list {}".format(i))
+            self.add_fav_list(items=i[FAV_WIDGET_PINS], name=i[FAV_WIDGET_NAME])
 
         # Make sure we have at least one pin list
         if not self.fav_combo.count():
@@ -572,7 +576,9 @@ class MainWindow(QtWidgets.QMainWindow):
         :return:
         """
 
-        fav_widget = FavWidget(self, items=items, name=name)
+        # fav_widget = createView(QtWidgets.QListWidget, FavWidget, self, items, name)
+        fav_widget = FavWidget(items, name)
+        fav_widget.path_changed.connect(self.set_active_browser_path)
 
         if not name:
             if widget_data and NAME in widget_data.keys():
@@ -592,11 +598,16 @@ class MainWindow(QtWidgets.QMainWindow):
             else:
                 i.hide()
 
+
     def set_active_browser_title(self, title):
         self._browser_context.set_title(title)
 
     def add_browser(self, browser_data=None, set_path=True):
         browser_window = BrowserWidget(self, browser_data=browser_data)
+        browser_window.is_active.connect(self.set_active_browser)  # Signal
+        browser_window.list_view.path_changed.connect(self.set_active_browser_path)
+        browser_window.table_view.path_changed.connect(self.set_active_browser_path)
+
         self._browser_widgets_list.append(browser_window)
         self._browser_context.add_widget(browser_window)
         self.set_active_browser(browser_window)
@@ -607,7 +618,17 @@ class MainWindow(QtWidgets.QMainWindow):
             else:
                 self.get_active_browser().set_path(TEST_PATH, is_dir=True)
 
+            self.set_active_browser_title(self.get_active_browser()._leaf)
+
         return browser_window
+
+    def get_browser(self, browser):
+        """
+        Test Code for checking if Signal object works.
+        :param browser:
+        :return:
+        """
+        log.debug("Signal Browser instance found {}".format(browser))
 
     def remove_browser(self, browser_widget):
         log.debug("{} Removing widget {}".format(self.__class__.__name__, browser_widget))
@@ -621,17 +642,6 @@ class MainWindow(QtWidgets.QMainWindow):
             else:
                 self.set_active_browser(None)
 
-
-        # if browser_widget in self._browser_widgets_list:
-        #     print("Removing widget {}")
-        #     self._browser_widgets_list.remove(browser_widget)
-        #     self._browser_context.remove_widget(browser_widget)
-        # if self._active == browser_widget:
-        #     if self._browser_widgets_list:
-        #         self.set_active_browser(self._browser_widgets_list[0])
-        #     else:
-        #         self.set_active_browser(None)
-
     def get_browser_list(self):
         # Call on the MainWindow Singleton to ensure that it has been instantiated.
         return self._browser_widgets_list
@@ -644,13 +654,39 @@ class MainWindow(QtWidgets.QMainWindow):
             print(traceback.print_stack())
             raise TypeError("")
 
-        log.debug("setting active browser {}".format(browser.windowTitle()))
+        log.debug("Main Window setting active browser {}".format(browser.windowTitle()))
 
         for w in self._browser_widgets_list:
-            w.setStyleSheet(INACTIVE_STYLE)
+            assert isinstance(w, BrowserWidget)
+            w.list_view.setStyleSheet(INACTIVE_STYLE)
+            w.table_view.setStyleSheet(INACTIVE_STYLE)
         self._active = browser
         if browser:
-            browser.setStyleSheet(ACTIVE_STYLE)
+            browser.list_view.setStyleSheet(ACTIVE_STYLE)
+            browser.table_view.setStyleSheet(ACTIVE_STYLE)
+
+
+
+    def set_active_browser_path(self, file_item: FileItem):
+        log.debug("Setting Active Browser Path {}".format(file_item.full_path))
+        browser = self.get_active_browser()
+        line_edit = browser.path_line_edit
+
+        assert isinstance(browser, BrowserWidget)
+        browser.set_path(file_item.full_path, is_dir=True)
+        p = line_edit.palette()
+        color = file_item.color()
+        if isinstance(color, list):
+            new_color = QtGui.QColor()
+            new_color.setRgbF(*color)
+            color = new_color
+
+
+        p.setColor(line_edit.backgroundRole(), color)
+        line_edit.setPalette(p)
+        # browser.setStyleSheet('background-color: red;')
+
+        pass
 
     def set_drag_message(self, message):
         self._drag_message = message
@@ -664,7 +700,7 @@ class MainWindow(QtWidgets.QMainWindow):
             assert isinstance(b, BrowserWidget)
             if b.windowTitle() == SEARCH_TAB_TITLE:
                 continue
-            for i in b.list_view.get_items():
+            for i in b._view_context.get_items():
                 all_items.append(i)
         # fav widgets
         all_items.extend(self.get_fav_items())
@@ -672,7 +708,10 @@ class MainWindow(QtWidgets.QMainWindow):
         return all_items
 
     def closeEvent(self, *args):
-        self.kill_active_threads()
+        try:
+            self.kill_active_threads()
+        except Exception as ex:
+            log.error(ex)
 
         if CAN_SAVE_SETTINGS:
             self.save_fav_lists()
@@ -689,7 +728,6 @@ def serialize(obj):
 
     obj_data = {}
     for k, v in obj.__dict__.items():
-        print(v)
         can_serialize = False
         for i in serializable_types:
            if isinstance(v, i):
@@ -722,8 +760,10 @@ if __name__ == '__main__':
     window.set_browser_context(DOCK_WIDGET_VIEW_MODE)
     window.show()
 
-    window.set_browser_context()
+    window.set_browser_context(context=DOCK_WIDGET_VIEW_MODE)
     window.add_browser({FULL_PATH: TEST_PATH})
+    if not window.fav_combo.count():
+        window.add_fav_list({}, name="Fav Stuffs")
 
 
     STYLE_SHEET_PATH = "./stylesheets/light_theme.css"

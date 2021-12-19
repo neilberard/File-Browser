@@ -99,6 +99,11 @@ class MainWindow(QtWidgets.QMainWindow):
         #                    "border-spacing: 0px 0px;"
         #                    "margin: 0px;}")
 
+        # SETTINGS
+        # ========================================
+        self._settings = QtCore.QSettings(APPLICATION_NAME)
+        self._settings.setPath(QtCore.QSettings.IniFormat, QtCore.QSettings.UserScope, SETTINGS_PATH)
+
         self._browser_widgets_list = []
         self._active = None
         self._search_delay = 0.3
@@ -132,14 +137,14 @@ class MainWindow(QtWidgets.QMainWindow):
         self.back_btn.setMaximumWidth(TOOL_BAR_BUTTON_WIDTH)
         self.back_btn.setIcon(QtGui.QIcon(os.path.join(ICON_PATH, "chevron-left.svg")))
         self.tool_bar.layout().addWidget(self.back_btn)
-        self.back_btn.clicked.connect(lambda : self.get_active_browser().back())
+        self.back_btn.clicked.connect(lambda: self.get_active_browser().back())
 
         # Forward Button
         self.forward_btn = QtWidgets.QPushButton()
         self.forward_btn.setMaximumWidth(TOOL_BAR_BUTTON_WIDTH)
         self.forward_btn.setIcon(QtGui.QIcon(os.path.join(ICON_PATH, "chevron-right.svg")))
         self.tool_bar.layout().addWidget(self.forward_btn)
-        self.forward_btn.clicked.connect(lambda : self.get_active_browser().forward())
+        self.forward_btn.clicked.connect(lambda: self.get_active_browser().forward())
 
         # Directory up button
         self.up_btn = QtWidgets.QPushButton()
@@ -579,6 +584,7 @@ class MainWindow(QtWidgets.QMainWindow):
         # fav_widget = createView(QtWidgets.QListWidget, FavWidget, self, items, name)
         fav_widget = FavWidget(items, name)
         fav_widget.path_changed.connect(self.set_active_browser_path)
+        fav_widget.new_tab.connect(self.add_browser_from_dict)
 
         if not name:
             if widget_data and NAME in widget_data.keys():
@@ -602,11 +608,18 @@ class MainWindow(QtWidgets.QMainWindow):
     def set_active_browser_title(self, title):
         self._browser_context.set_title(title)
 
+    def add_browser_from_dict(self, item: FileItem):
+        self.add_browser()
+        self.set_active_browser_path(item)
+
+
     def add_browser(self, browser_data=None, set_path=True):
         browser_window = BrowserWidget(self, browser_data=browser_data)
         browser_window.is_active.connect(self.set_active_browser)  # Signal
         browser_window.list_view.path_changed.connect(self.set_active_browser_path)
         browser_window.table_view.path_changed.connect(self.set_active_browser_path)
+
+        browser_window.table_view.new_tab.connect(self.add_browser_from_dict)
 
         self._browser_widgets_list.append(browser_window)
         self._browser_context.add_widget(browser_window)
@@ -668,12 +681,12 @@ class MainWindow(QtWidgets.QMainWindow):
 
 
     def set_active_browser_path(self, file_item: FileItem):
-        log.debug("Setting Active Browser Path {}".format(file_item.full_path))
+        log.debug("Setting Active Browser Path {}".format(file_item._full_path))
         browser = self.get_active_browser()
         line_edit = browser.path_line_edit
 
         assert isinstance(browser, BrowserWidget)
-        browser.set_path(file_item.full_path, is_dir=True)
+        browser.set_path(file_item._full_path, is_dir=True)
         p = line_edit.palette()
         color = file_item.color()
         if isinstance(color, list):
@@ -708,17 +721,22 @@ class MainWindow(QtWidgets.QMainWindow):
         return all_items
 
     def closeEvent(self, *args):
+
         try:
             self.kill_active_threads()
         except Exception as ex:
             log.error(ex)
 
         if CAN_SAVE_SETTINGS:
+            self._settings.setValue('size', self.size())
+            self._settings.setValue('pos', self.pos())
             self.save_fav_lists()
         else:
             log.warning("Cannot save fav list!")
 
     def showEvent(self, *args):
+        self.resize(self._settings.value('size', QtCore.QSize(500, 500)))
+
         self.load_saved_data()
 
 

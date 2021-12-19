@@ -50,7 +50,7 @@ class FileItem:
     """
 
     _file_info = QtCore.QFileInfo()
-    full_path = None #TODO: Make this private
+    _full_path = None
     _icon = None
     _nice_name = ""
     _clicked_times = 0
@@ -59,10 +59,10 @@ class FileItem:
 
     def __init__(self, item_data: dict):
 
-        self._color = []
+        self._color = [1.0, 1.0, 1.0, 1.0]
 
         self.__dict__.update(item_data)
-        self._file_info = QtCore.QFileInfo(self.full_path)
+        self._file_info = QtCore.QFileInfo(self._full_path)
         self._file_name = self._file_info.fileName()
         self._suffix = self._file_info.completeSuffix()
 
@@ -73,7 +73,7 @@ class FileItem:
             self._sort_token = self._suffix + self._file_name
 
     def file_path(self):
-        return self.full_path
+        return self._full_path
 
     def file_name(self):
         return self._file_name
@@ -106,6 +106,7 @@ class FileItem:
 
 class AbstractDockWindow:
     is_closed = Signal(object)
+    new_browser = Signal(str)
 
     def __init__(self):
         pass
@@ -176,7 +177,6 @@ class TabWindow(AbstractDockWindow, QtWidgets.QTabWidget):
 
     def set_active(self):
         self.currentWidget().is_active.emit(self.currentWidget())
-
 
 class DockWindow(AbstractDockWindow, QtWidgets.QWidget):
     def __init__(self):
@@ -399,6 +399,7 @@ class BaseFileListWidget:  # MIXIN CLASS
 
     is_active = Signal()
     path_changed = Signal(object)
+    new_tab = Signal(object)
 
     def __init__(self, *args):
         log.debug("init BaseFileWidget []".format(args))
@@ -451,7 +452,7 @@ class BaseFileListWidget:  # MIXIN CLASS
 
 
     def show_in_explorer(self):
-        item = self.currentItem()
+        item = self.current_file_item()
         if not item:
             os.startfile(self.parent().get_path())
         if item.is_dir():
@@ -467,7 +468,7 @@ class BaseFileListWidget:  # MIXIN CLASS
         open_in_new_tab.triggered.connect(self.open_in_new_tab)
 
         show_in_explorer = self._context_menu.addAction("Show in Explorer")
-        # show_in_explorer.triggered.connect(self.show_in_explorer)
+        show_in_explorer.triggered.connect(self.show_in_explorer)
 
         copy_path = self._context_menu.addAction("Copy Path")
         # copy_path.triggered.connect(self.copy_path)
@@ -485,11 +486,12 @@ class BaseFileListWidget:  # MIXIN CLASS
         browser.set_view_context(view)
 
     def open_in_new_tab(self):
-        item = self.current_file_item()
-        if item.is_dir():
-            self._main_window.add_browser({"_full_path": self.currentItem().file_path()})
-        else:
-            self._main_window.add_browser({"_full_path": os.path.dirname(item.file_path())})
+        for i in self.selectedItems():
+            item = i.item
+            if item.is_dir():
+                self.new_tab.emit(item)
+
+
 
     def mouseDoubleClickEvent(self, event):
         self.open()
@@ -596,13 +598,11 @@ class FileViewWidget(FileTableWidget):
         for row, path in enumerate(items):
             full_path = os.path.join(directory, path)
             full_path = full_path.replace('\\', '/')
-            file_item = FileItem({'full_path': full_path})
+            file_item = FileItem({'_full_path': full_path})
             self.add_item(file_item)
         # self.sortItems()
 
         self.setHorizontalHeaderLabels(self._display_keys)
-
-
 
 class FavWidget(FileTableWidget):
     def __init__(self, items, name):

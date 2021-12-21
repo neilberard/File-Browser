@@ -12,6 +12,7 @@ import traceback
 
 
 from PySide2 import QtWidgets, QtCore, QtGui
+from PySide2.QtCore import Signal
 
 from libs import utils
 from libs.widgets import TabWindow, DockWindow, BrowserWidget, FavWidget, FileItem
@@ -58,8 +59,6 @@ SEARCH_TAB_TITLE = "Search Results"
 MAX_RESULTS = 200
 
 
-
-
 class MainWindow(QtWidgets.QMainWindow):
     """
     Singleton Class
@@ -73,6 +72,10 @@ class MainWindow(QtWidgets.QMainWindow):
     _drag_message = None
     _save_data = None
     _filter = None
+
+    cancel_search = Signal()
+    start_search = Signal()
+
 
     # Slots
     apply_filter = QtCore.Signal(str, dict)
@@ -88,6 +91,8 @@ class MainWindow(QtWidgets.QMainWindow):
         super().__init__()
 
         # Custom Signals
+
+
 
         # Prevent multiple widgets from entering a drag event.
         self.is_dragging = False
@@ -249,19 +254,31 @@ class MainWindow(QtWidgets.QMainWindow):
         self._filter = None
 
         # Threading
-        self.threadpool = QtCore.QThreadPool()
-        log.debug("Max threads {}".format(self.threadpool.maxThreadCount()))
-        self._can_search = True
-        self._is_searching = False
-        self.active_threads = 0
+        self._thread = utils.Thread()
+        self._thread.signals.progress.connect(self.search_progess)
+        self.cancel_search.connect(self._thread.exit)
+
+
+
+
         # self.run_search_thread()
 
+
+    def search_progess(self, progress):
+        print("Progress {}".format(progress))
 
     def set_search_filter(self):
         # print(self.search_ln_edit.text())
         self.apply_filter.emit(self.search_ln_edit.text(), {})
 
-    def search_function(self, progress_callback):
+    def search_function(self, progress_callback: utils.WorkerSignals, search_limit=100):
+        time.sleep(.1)
+        item = FileItem({})
+        progress_callback.result.emit(item)
+        return
+
+
+
 
         log.info("Running search function! {}".format(self._can_search))
         self.active_threads += 1
@@ -295,7 +312,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
                 found_items.append(full_path)
                 try:
-                    item = FileItemWidget({'full_path': full_path})
+                    item = FileItem({'full_path': full_path})
                     main_window.get_active_browser().list_view.add_item(item)
                     found_items.append(full_path)
                 except Exception as ex:
@@ -351,6 +368,9 @@ class MainWindow(QtWidgets.QMainWindow):
         return
 
     def stop_searching(self):
+        self.cancel_search.emit()
+        return
+
         self._can_search = False
         self.search_cancel_btn.hide()
         self.search_status_lbl.hide()
@@ -373,6 +393,10 @@ class MainWindow(QtWidgets.QMainWindow):
 
         :return:
         """
+        self.search_cancel_btn.show()
+        self._thread.start()
+        return
+
         # if not self.search_ln_edit.text():
         #     search_browser = self.get_active_browser().list_view
         #     if search_browser.windowTitle() == SEARCH_TAB_TITLE:
@@ -445,7 +469,7 @@ class MainWindow(QtWidgets.QMainWindow):
         dialog = QtWidgets.QInputDialog(self)
         dialog.setWindowTitle("New pin list")
         dialog.setLabelText("List name")
-        func = lambda : self.add_fav_list(widget_data={NAME: dialog.textValue()})
+        func = lambda: self.add_fav_list(widget_data={NAME: dialog.textValue()})
         dialog.accepted.connect(func)
         dialog.move(self.fav_combo.mapToGlobal(self.fav_combo.pos()))
         dialog.show()
@@ -482,6 +506,7 @@ class MainWindow(QtWidgets.QMainWindow):
         browser_data = {}
         for num, b in enumerate(self._browser_widgets_list):
             browser_data["browser_" + str(num)] = serialize(b)
+            print(browser_data)
 
         pin_list_data = []
 
@@ -491,6 +516,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
             pin_list_items = []
             for i in fav_list.get_items():
+
                 pin_list_items.append(serialize(i))
 
             pin_list_data.append({FAV_WIDGET_NAME: self.fav_combo.itemText(num),
@@ -584,7 +610,7 @@ class MainWindow(QtWidgets.QMainWindow):
         # fav_widget = createView(QtWidgets.QListWidget, FavWidget, self, items, name)
         fav_widget = FavWidget(items, name)
         fav_widget.path_changed.connect(self.set_active_browser_path)
-        fav_widget.new_tab.connect(self.add_browser_from_dict)
+        fav_widget.new_tab.connect(self.add_browser_from_item)
 
         if not name:
             if widget_data and NAME in widget_data.keys():
@@ -595,6 +621,12 @@ class MainWindow(QtWidgets.QMainWindow):
         self.fav_combo.addItem(name, fav_widget)
         self.fav_grp.layout().addWidget(fav_widget)
         self.fav_combo.setCurrentIndex(self.fav_combo.count() - 1)
+
+    def add_fav_pin(self, item):
+        fav_widget = self.fav_combo.currentData()
+        assert isinstance(fav_widget, FavWidget)
+        fav_widget.add_item(item)
+
 
     def set_active_pin_tray(self, tray):
         for idx in range(self.fav_combo.count()):
@@ -608,7 +640,7 @@ class MainWindow(QtWidgets.QMainWindow):
     def set_active_browser_title(self, title):
         self._browser_context.set_title(title)
 
-    def add_browser_from_dict(self, item: FileItem):
+    def add_browser_from_item(self, item: FileItem):
         self.add_browser()
         self.set_active_browser_path(item)
 
@@ -619,7 +651,12 @@ class MainWindow(QtWidgets.QMainWindow):
         browser_window.list_view.path_changed.connect(self.set_active_browser_path)
         browser_window.table_view.path_changed.connect(self.set_active_browser_path)
 
-        browser_window.table_view.new_tab.connect(self.add_browser_from_dict)
+        browser_window.table_view.new_tab.connect(self.add_browser_from_item)
+        browser_window.table_view.new_pin.connect(self.add_fav_pin)
+
+        # PATH EDIT
+        browser_window.path_line_edit.new_tab.connect(self.add_browser_from_item)
+        browser_window.path_line_edit.new_pin.connect(self.add_fav_pin)
 
         self._browser_widgets_list.append(browser_window)
         self._browser_context.add_widget(browser_window)
@@ -627,9 +664,9 @@ class MainWindow(QtWidgets.QMainWindow):
 
         if set_path:
             if browser_data:
-                self.get_active_browser().set_path(browser_data[FULL_PATH], is_dir=True)
+                self.get_active_browser().set_path(browser_data[FULL_PATH])
             else:
-                self.get_active_browser().set_path(TEST_PATH, is_dir=True)
+                self.get_active_browser().set_path(TEST_PATH)
 
             self.set_active_browser_title(self.get_active_browser()._leaf)
 
@@ -679,14 +716,13 @@ class MainWindow(QtWidgets.QMainWindow):
             browser.table_view.setStyleSheet(ACTIVE_STYLE)
 
 
-
     def set_active_browser_path(self, file_item: FileItem):
         log.debug("Setting Active Browser Path {}".format(file_item._full_path))
         browser = self.get_active_browser()
         line_edit = browser.path_line_edit
 
         assert isinstance(browser, BrowserWidget)
-        browser.set_path(file_item._full_path, is_dir=True)
+        browser.set_path(file_item)
         p = line_edit.palette()
         color = file_item.color()
         if isinstance(color, list):
@@ -697,9 +733,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
         p.setColor(line_edit.backgroundRole(), color)
         line_edit.setPalette(p)
-        # browser.setStyleSheet('background-color: red;')
 
-        pass
 
     def set_drag_message(self, message):
         self._drag_message = message
@@ -739,13 +773,31 @@ class MainWindow(QtWidgets.QMainWindow):
 
         self.load_saved_data()
 
+def serialize_rercursive(obj, serialized):
+    if not isinstance(obj, dict):
+        obj = obj.__dict__
+
+    for k, v in obj.items():
+        if isinstance(v, dict):
+            serialized[k] = {}
+            serialized[k] = serialize_rercursive(v, serialized[k])
+        else:
+            item = serialize(v)
+            if item:
+                serialized[k] = serialize(item)
+
 
 def serialize(obj):
+    if hasattr(obj, 'toJSON'):
+        return obj.toJSON()
+
+    if not isinstance(obj, dict):
+        return None
 
     serializable_types = [int, list, dict, float, str]
 
     obj_data = {}
-    for k, v in obj.__dict__.items():
+    for k, v in obj.items():
         can_serialize = False
         for i in serializable_types:
            if isinstance(v, i):

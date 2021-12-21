@@ -8,6 +8,8 @@ Class FileItem is how data for all items are stored.
 """
 
 import abc
+import json
+from json import JSONEncoder
 import logging
 import os
 import shutil
@@ -58,6 +60,7 @@ class FileItem:
 
 
     def __init__(self, item_data: dict):
+        super().__init__()
 
         self._color = [1.0, 1.0, 1.0, 1.0]
 
@@ -77,6 +80,9 @@ class FileItem:
 
     def file_name(self):
         return self._file_name
+
+    def file_leaf(self):
+        return os.path.split(self._full_path)[-1]
 
     def is_dir(self):
         return self._file_info.isDir()
@@ -102,6 +108,27 @@ class FileItem:
 
     def color(self):
         return self._color
+
+    def toJSON(self):
+        serializable_types = [int, list, dict, float, str]
+        obj_data = {}
+        for k, v in self.__dict__.items():
+            can_serialize = False
+            for i in serializable_types:
+                if isinstance(v, i):
+                    can_serialize = True
+            if can_serialize:
+                obj_data[k] = v
+        return obj_data
+
+
+
+
+
+
+
+
+
 
 
 class AbstractDockWindow:
@@ -178,6 +205,7 @@ class TabWindow(AbstractDockWindow, QtWidgets.QTabWidget):
     def set_active(self):
         self.currentWidget().is_active.emit(self.currentWidget())
 
+
 class DockWindow(AbstractDockWindow, QtWidgets.QWidget):
     def __init__(self):
         QtWidgets.QWidget.__init__(self)
@@ -241,169 +269,19 @@ class DockWidget(QtWidgets.QDockWidget):
         pass
 
 
-# CONTEXT WIDGETS
-class PathLineEdit(QtWidgets.QLineEdit):
-    def __init__(self):
-        super().__init__()
-        self.setAcceptDrops(True)
-        self.setDragEnabled(True)
-
-    # def dragEnterEvent(self, event):
-    #     print("Dragging! {}".format(type(self).__name__))
-
-
-# BROWSER WIDGET TYPES TODO: Consolidate this into one class.
-
-
-class BrowserWidget(QtWidgets.QWidget):
-    _view_context = None
-    is_active = Signal(object)
-    is_closed = Signal(object)
-    # path_changed = Signal(str)  # Path
-
-    def __init__(self, main_window, browser_data=None):
-        super().__init__()
-        # self._main_window = main_window
-        # Data
-        self._leaf = ""
-        self._full_path = ""
-        self._items = []
-
-        self._active = False
-
-        # History
-        self.history = []
-        self.history_idx = 0
-
-        self.central_layout = QtWidgets.QVBoxLayout()
-        self.setLayout(self.central_layout)
-        self.layout().setContentsMargins(0, 5, 0, 0)
-
-        # BROWSER PATH
-        self.path_line_edit = PathLineEdit()
-        self.central_layout.addWidget(self.path_line_edit)
-
-        # VIEW CONTEXT
-        # self.table_view = createView(QtWidgets.QTableWidget, FileTableWidget, main_window, ["file_name", "file_path"])
-        self.table_view = FileViewWidget([FILE_NAME, FILE_PATH])
-        self.table_view.is_active.connect(self.set_active)  # Signal
-
-        self.list_view = FileViewWidget([FILE_NAME, FILE_PATH])
-        # self.list_view = createView(QtWidgets.QListWidget, FileListWidget, main_window)
-        self.list_view.is_active.connect(self.set_active)  # Signal
-
-        self.central_layout.addWidget(self.list_view)
-        self.central_layout.addWidget(self.table_view)
-        self.set_view_context(TABLE_VIEW_MODE)
-
-        # SIGNAL
-        self.path_line_edit.textEdited.connect(self.set_path_edit)
-
-        # Additional
-        self.path_line_edit.setAutoFillBackground(True)
-        self.table_view.setAutoFillBackground(True)
-        self.list_view.setAutoFillBackground(True)
-
-        if browser_data:
-            self.__dict__.update(browser_data)
-
-    def set_view_context(self, context: str):
-        """
-        Switch view context- Table, List or *Tree(might be supported in the future.)
-        :param context: const IE: TABLE_VIEW_MODE
-        """
-
-        # TABLE
-        if context == TABLE_VIEW_MODE and self._view_context is not self.table_view:
-            self.list_view.hide()
-            self.table_view.show()
-            self._view_context = self.table_view
-
-        # LIST
-        elif context == LIST_VIEW_MODE and self._view_context is not self.list_view:
-            self.table_view.hide()
-            self.list_view.show()
-            self._view_context = self.list_view
-
-        if self._full_path:
-            self.set_path(self._full_path, is_dir=True, history=False, set_text=False)
-
-    def set_path_edit(self):
-        path = self.path_line_edit.text()
-        if os.path.isdir(self.path_line_edit.text()):
-            self.set_path(path, is_dir=True, set_text=False)
-
-    def set_path(self, path, is_dir=False, history=True, set_text=True):
-
-        self._leaf = os.path.split(path)[-1]
-        self._full_path = path
-        if not self._leaf:
-            self._leaf = self._full_path
-
-        self.setWindowTitle(self._leaf)
-
-        if is_dir:
-            # self.path_changed.emit(path)
-            self._view_context.set_root_directory(path)
-            if set_text:
-                self.path_line_edit.setText(path)
-
-
-            # TODO: This is ugly, make it clean.
-            if history and not self.history or history and self.history[-1] != path:
-                self.history.append(path)
-                self.history_idx = len(self.history) -1
-
-
-            # self._main_window.set_active_browser_title(self._leaf)
-
-    def get_path(self):
-        return self._full_path
-
-    def back(self):
-        if self.history_idx > 0:
-            self.history_idx -= 1
-            self.set_path(self.history[self.history_idx], is_dir=True, history=False)
-
-    def forward(self):
-        if self.history_idx < (len(self.history) -1):
-            self.history_idx += 1
-            self.set_path(self.history[self.history_idx], is_dir=True, history=False)
-
-    def up(self):
-        new_dir = os.path.dirname(self._full_path)
-        self.set_path(new_dir, is_dir=True)
-
-    def set_dir(self):
-        item = self._view_context.currentItem()
-        self.set_path(item.file_path(), is_dir=item.file_info.isDir())
-
-    def mouseDoubleClickEvent(self, event):
-        self.set_dir()
-        self.set_active(True)
-
-    def set_active(self, active=True):
-        log.debug("Setting active Browser {}".format(self.windowTitle()))
-        self.is_active.emit(self)
-        # self._main_window.set_active_browser(self)
-
-    # def mouseMoveEvent(self, event):
-    #     print("Move!")
-
-
 class BaseFileListWidget:  # MIXIN CLASS
     _context_menu = None
     _can_set_active = True
     _display_keys = ["file_name"]
 
-
     is_active = Signal()
     path_changed = Signal(object)
     new_tab = Signal(object)
+    new_pin = Signal(object)
 
     def __init__(self, *args):
         log.debug("init BaseFileWidget []".format(args))
-
+        self._item = None
         self._items = []
         self.setAcceptDrops(True)
         self.setDragEnabled(True)
@@ -471,7 +349,10 @@ class BaseFileListWidget:  # MIXIN CLASS
         show_in_explorer.triggered.connect(self.show_in_explorer)
 
         copy_path = self._context_menu.addAction("Copy Path")
-        # copy_path.triggered.connect(self.copy_path)
+        copy_path.triggered.connect(self.copy_path)
+
+        add_pin = self._context_menu.addAction("Add Pin")
+        add_pin.triggered.connect(self.add_pin)
 
         select_view_submenu = self._context_menu.addMenu("View")
         set_table = select_view_submenu.addAction("Details")
@@ -485,27 +366,34 @@ class BaseFileListWidget:  # MIXIN CLASS
         browser = self._main_window.get_active_browser()
         browser.set_view_context(view)
 
+    def copy_path(self):
+        item = self.current_file_item()
+        cmd = "ECHO {} | CLIP".format(item.file_path())
+        subprocess.run(cmd, shell=True)
+
     def open_in_new_tab(self):
         for i in self.selectedItems():
-            item = i.item
+            if isinstance(i, FileItem):
+                item = i
+            else:
+                item = i.item
             if item.is_dir():
                 self.new_tab.emit(item)
-
-
 
     def mouseDoubleClickEvent(self, event):
         self.open()
         # self.currentItem().clicked_times -= 1
         # log.debug(self.currentItem().clicked_times)
 
+    def add_pin(self):
+        self.new_pin.emit(self.current_file_item())
+
+
     def open(self):
         item = self.current_file_item()
         print("got item {}".format(item))
         if item.is_dir():
             self.path_changed.emit(item)
-
-            # browser = self._main_window.get_active_browser()
-            # browser.set_path(item.file_path(), is_dir=item.is_dir())
         else:
             os.startfile(item.file_path())
 
@@ -513,6 +401,180 @@ class BaseFileListWidget:  # MIXIN CLASS
         item = self.currentItem()
         return item.item
 
+# CONTEXT WIDGETS
+class PathLineEdit(BaseFileListWidget, QtWidgets.QLineEdit):
+    def __init__(self):
+        QtWidgets.QLineEdit.__init__(self)
+        BaseFileListWidget.__init__(self)
+
+    def selectedItems(self):
+        return [self.current_file_item()]
+
+    def current_file_item(self):
+        return self.parent()._item
+
+
+
+
+
+# BROWSER WIDGET TYPES TODO: Consolidate this into one class.
+
+
+class BrowserWidget(QtWidgets.QWidget):
+    _view_context = None
+    is_active = Signal(object)
+    is_closed = Signal(object)
+    # path_changed = Signal(str)  # Path
+
+    def __init__(self, main_window, browser_data=None):
+        super().__init__()
+        # self._main_window = main_window
+        # Data
+        self._item = None
+
+        self._leaf = ""
+        self._full_path = ""
+        self._items = []
+
+        self._active = False
+
+        # History
+        self.history = []
+        self.history_idx = 0
+
+        self.central_layout = QtWidgets.QVBoxLayout()
+        self.setLayout(self.central_layout)
+        self.layout().setContentsMargins(0, 5, 0, 0)
+
+        # BROWSER PATH
+        self.path_line_edit = PathLineEdit()
+
+        self.central_layout.addWidget(self.path_line_edit)
+
+        # VIEW CONTEXT
+        # self.table_view = createView(QtWidgets.QTableWidget, FileTableWidget, main_window, ["file_name", "file_path"])
+        self.table_view = FileViewWidget([FILE_NAME, FILE_PATH])
+        self.table_view.is_active.connect(self.set_active)  # Signal
+
+        self.list_view = FileViewWidget([FILE_NAME, FILE_PATH])
+        # self.list_view = createView(QtWidgets.QListWidget, FileListWidget, main_window)
+        self.list_view.is_active.connect(self.set_active)  # Signal
+
+        self.central_layout.addWidget(self.list_view)
+        self.central_layout.addWidget(self.table_view)
+        self.set_view_context(TABLE_VIEW_MODE)
+
+        # SIGNAL
+        self.path_line_edit.textEdited.connect(self.set_path_edit)
+
+        # Additional
+        self.path_line_edit.setAutoFillBackground(True)
+        self.table_view.setAutoFillBackground(True)
+        self.list_view.setAutoFillBackground(True)
+
+        if browser_data:
+            self.__dict__.update(browser_data)
+
+    def set_view_context(self, context: str):
+        """
+        Switch view context- Table, List or *Tree(might be supported in the future.)
+        :param context: const IE: TABLE_VIEW_MODE
+        """
+
+        # TABLE
+        if context == TABLE_VIEW_MODE and self._view_context is not self.table_view:
+            self.list_view.hide()
+            self.table_view.show()
+            self._view_context = self.table_view
+
+        # LIST
+        elif context == LIST_VIEW_MODE and self._view_context is not self.list_view:
+            self.table_view.hide()
+            self.list_view.show()
+            self._view_context = self.list_view
+
+        if self._full_path:
+            self.set_path(self._full_path, is_dir=True, history=False, set_text=False)
+
+    def set_path_edit(self):
+        path = self.path_line_edit.text()
+        if os.path.isdir(self.path_line_edit.text()):
+            self.set_path(path, set_text=False)
+
+    def set_path(self, path, history=True, set_text=True):
+        """
+        :param path: FileItem or Str
+        :param history: Bool
+        :param set_text: Bool
+        :return:
+        """
+
+        if isinstance(path, FileItem):
+            self._item = path
+            print("Path is File Item!")
+        else:
+            self._item = FileItem({FULL_PATH: path})
+
+        self.setWindowTitle(self._item.file_leaf())
+
+        if self._item.is_dir():
+            self._view_context.set_root_directory(self._item)
+            if set_text:
+                self.path_line_edit.setText(self._item.file_path())
+            self.set_color()
+
+            # TODO: This is ugly, make it clean.
+            if history and not self.history or history and self.history[-1] != self._item:
+                self.history.append(self._item)
+                self.history_idx = len(self.history) -1
+
+
+            # self._main_window.set_active_browser_title(self._leaf)
+
+    def get_path(self):
+        return self._full_path
+
+    def back(self):
+        if self.history_idx > 0:
+            self.history_idx -= 1
+            self.set_path(self.history[self.history_idx], history=False)
+
+    def forward(self):
+        if self.history_idx < (len(self.history) -1):
+            self.history_idx += 1
+            self.set_path(self.history[self.history_idx], history=False)
+
+    def up(self):
+        new_dir = os.path.dirname(self._item.file_path())
+        self.set_path(new_dir)
+
+    def set_color(self):
+        p = self.path_line_edit.palette()
+        color = self._item.color()
+        if isinstance(color, list):
+            new_color = QtGui.QColor()
+            new_color.setRgbF(*color)
+            color = new_color
+
+        p.setColor(self.path_line_edit.backgroundRole(), color)
+        self.path_line_edit.setPalette(p)
+
+
+    def set_dir(self):
+        item = self._view_context.currentItem()
+        self.set_path(item.file_path(), is_dir=item.file_info.isDir())
+
+    def mouseDoubleClickEvent(self, event):
+        self.set_dir()
+        self.set_active(True)
+
+    def set_active(self, active=True):
+        log.debug("Setting active Browser {}".format(self.windowTitle()))
+        self.is_active.emit(self)
+        # self._main_window.set_active_browser(self)
+
+    # def mouseMoveEvent(self, event):
+    #     print("Move!")
 
 class FileTableWidget(BaseFileListWidget, QtWidgets.QTableWidget):
 
@@ -552,7 +614,7 @@ class FileTableWidget(BaseFileListWidget, QtWidgets.QTableWidget):
         :param item:
         :return:
         """
-        print("adding item {}".format(item))
+        # print("adding item {}".format(item))
         self._items.append(item)
 
         row = self.rowCount()
@@ -584,21 +646,25 @@ class FileTableWidget(BaseFileListWidget, QtWidgets.QTableWidget):
         for col, table_item in enumerate(table_items):
             self.setItem(row, col, table_item)
 
+
 class FileViewWidget(FileTableWidget):
     def __init__(self, display_keys: list):
         super(FileViewWidget, self).__init__(display_keys)
 
-    def set_root_directory(self, directory):
-        log.debug("Table Widget Setting Root {}".format(directory))
+    def set_root_directory(self, item: FileItem):
+        log.debug("Table Widget Setting Root {}".format(item))
 
         self.clear()
-        self.directory = directory
-        items = os.listdir(directory)
+        if isinstance(item, FileItem):
+            self._item = item
+        else:
+            self._item = FileItem({FULL_PATH: item})
+        items = os.listdir(self._item.file_path())
 
         for row, path in enumerate(items):
-            full_path = os.path.join(directory, path)
+            full_path = os.path.join(self._item.file_path(), path)
             full_path = full_path.replace('\\', '/')
-            file_item = FileItem({'_full_path': full_path})
+            file_item = FileItem({FULL_PATH: full_path})
             self.add_item(file_item)
         # self.sortItems()
 

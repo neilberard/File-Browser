@@ -35,5 +35,9 @@ LIST_VIEW_MODE = "list_view_mode"
 FILE_NAME = "file_name"
 FILE_PATH = "file_path"
 
+FULL_PATH = "_full_path"
+
+FILE_COLOR = "_color"
+
 
 CAN_SAVE_SETTINGS = True

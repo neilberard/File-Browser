@@ -15,28 +15,12 @@ from PySide2 import QtWidgets, QtCore, QtGui
 from PySide2.QtCore import Signal
 
 from libs import utils
-from libs.widgets import TabWindow, DockWindow, BrowserWidget, FavWidget, FileItem
+from libs.widgets import TabWindow, DockWindow, BrowserWidget, FavWidget, FileItem, SearchOptionsWidget
 from libs.consts import *
 
 logging.basicConfig()
 log = logging.getLogger(__name__)
 log.setLevel(logging.DEBUG)
-
-
-
-
-if getattr(sys, 'frozen', False):
-    APPLICATION_PATH = os.path.dirname(sys.executable)
-
-else:
-    APPLICATION_PATH = os.path.dirname(__file__)
-
-log.info("APPLICATION_PATH {}".format(APPLICATION_PATH))
-SETTINGS_PATH = os.path.join(os.environ['APPDATA'], APPLICATION_NAME, 'data', 'save_data.json')
-log.info("SETTINGS PATH {}".format(SETTINGS_PATH))
-
-
-ICON_PATH = APPLICATION_PATH + "/icons"
 
 
 DOCK_WIDGET_VIEW_MODE = "Dock Widgets"
@@ -74,11 +58,9 @@ class MainWindow(QtWidgets.QMainWindow):
     _filter = None
 
     cancel_search = Signal()
-    start_search = Signal()
+    start_search = Signal(object)
+    update_search = Signal(object)     # Send filter to active thread.
 
-
-    # Slots
-    apply_filter = QtCore.Signal(str, dict)
 
     def __new__(cls):
         if cls._instance is None:
@@ -106,8 +88,12 @@ class MainWindow(QtWidgets.QMainWindow):
 
         # SETTINGS
         # ========================================
-        self._settings = QtCore.QSettings(APPLICATION_NAME)
-        self._settings.setPath(QtCore.QSettings.IniFormat, QtCore.QSettings.UserScope, SETTINGS_PATH)
+        self._settings_path = os.path.join(SETTINGS_DIR, "main_window.ini")
+        self._settings = QtCore.QSettings(self._settings_path, QtCore.QSettings.IniFormat)
+        self._settings.setFallbacksEnabled(False)
+
+        self._data_path = os.path.join(DATA_DIR, "browser_data.json")
+
 
         self._browser_widgets_list = []
         self._active = None
@@ -117,6 +103,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.setCentralWidget(QtWidgets.QWidget())
         self.centralWidget().setLayout(QtWidgets.QVBoxLayout())
         self.c_layout = self.centralWidget().layout()
+
 
         # Tab Widget
         self.tab_widget = TabWindow()
@@ -176,7 +163,7 @@ class MainWindow(QtWidgets.QMainWindow):
         # Search Bar
         self.search_ln_edit = QtWidgets.QLineEdit()
         self.tool_bar.layout().addWidget(self.search_ln_edit)
-        self.search_ln_edit.textChanged.connect(self.run_search_thread)
+        self.search_ln_edit.textChanged.connect(self.run_search)
         self.search_ln_edit.setFixedWidth(300)
 
         # Search Cancel Button
@@ -184,6 +171,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self.search_cancel_btn.setIcon(QtGui.QIcon(os.path.join(ICON_PATH, "x-circle.svg")))
         self.tool_bar.layout().addWidget(self.search_cancel_btn)
         self.search_cancel_btn.hide()
+        self.cancel_search.connect(self.search_cancel_btn.hide)
+        self.start_search.connect(self.search_cancel_btn.show)
 
 
         # Search Status Label
@@ -193,21 +182,24 @@ class MainWindow(QtWidgets.QMainWindow):
         self.search_status_lbl.hide()
         self.tool_bar.layout().addStretch()
 
+        # Search Options
+        self._search_options = SearchOptionsWidget(self)
 
         # Search Results Tab
-        # self.search_results_window = BrowserWidget(self)
-        # self._browser_widgets_list.append(self.search_results_window)
-        # # self._browser_context.add_widget(self.search_results_window)
-        # self.set_active_browser(self.search_results_window)
-        # self.search_results_window.setWindowTitle("Search Results")
-        # self.search_results_window.hide()
+        self.search_results_window = BrowserWidget(self)
 
-
-        # Fav Toggle
+        # Hamburger btn
         self.hamburger_btn = QtWidgets.QPushButton()
         self.hamburger_btn.setMaximumWidth(TOOL_BAR_BUTTON_WIDTH)
         self.hamburger_btn.setIcon(QtGui.QIcon(os.path.join(ICON_PATH, "menu.svg")))
         self.tool_bar.layout().addWidget(self.hamburger_btn)
+        self.options_menu = QtWidgets.QMenu()
+        self.hamburger_btn.setMenu(self.options_menu)
+        search = self.options_menu.addAction("Search Options")
+        search.triggered.connect(self._search_options.show)
+
+        open_settings = self.options_menu.addAction("Open Settings Folder")
+        open_settings.triggered.connect(lambda: os.startfile(SETTINGS_DIR))
 
         self.lower_grp = QtWidgets.QGroupBox()
         self.c_layout.addWidget(self.lower_grp)
@@ -245,7 +237,6 @@ class MainWindow(QtWidgets.QMainWindow):
         self.lower_grp.layout().addWidget(self.dock_widget)
 
         # Signals
-        self.search_cancel_btn.clicked.connect(self.stop_searching)
 
         # init
         self._initialized = True
@@ -254,127 +245,23 @@ class MainWindow(QtWidgets.QMainWindow):
         self._filter = None
 
         # Threading
-        self._thread = utils.Thread()
-        self._thread.signals.progress.connect(self.search_progess)
-        self.cancel_search.connect(self._thread.exit)
-
-
-
-
-        # self.run_search_thread()
+        test_dirs = ['C:/Users/neilb/Pictures/Hikes', 'C:/Users/neilb/Pictures/ref']
+        self._thread = utils.Thread(search_directory_list=test_dirs)
+        self._thread.start()
 
 
     def search_progess(self, progress):
         print("Progress {}".format(progress))
 
-    def set_search_filter(self):
-        # print(self.search_ln_edit.text())
-        self.apply_filter.emit(self.search_ln_edit.text(), {})
 
-    def search_function(self, progress_callback: utils.WorkerSignals, search_limit=100):
-        time.sleep(.1)
-        item = FileItem({})
-        progress_callback.result.emit(item)
-        return
+    def search_started(self):
+        while self._active_threads:
+            pass
 
 
-
-
-        log.info("Running search function! {}".format(self._can_search))
-        self.active_threads += 1
-        self.get_active_browser().list_view.clear()
-
-        search_token = self.search_ln_edit.text().lower()
-        if not search_token:
-            log.info("No token")
-            self.active_threads -= 1
-            return
-        items = self.get_all_file_items()
-
-        found_items = []
-
-        def check_candidate(main_window, file_name, file_path):
-            candidate = file_name.lower()
-            if search_token in candidate:
-
-                if not file_path.endswith(file_name):
-                    full_path = "{}/{}".format(file_path, file_name)
-                else:
-                    full_path = file_path
-                full_path = full_path.replace("\\", "/")
-
-                if full_path in found_items:
-                    return
-                if len(found_items) > MAX_RESULTS:
-                    log.info("Hit max {} results".format(MAX_RESULTS))
-                    self._can_search = False
-                    return
-
-                found_items.append(full_path)
-                try:
-                    item = FileItem({'full_path': full_path})
-                    main_window.get_active_browser().list_view.add_item(item)
-                    found_items.append(full_path)
-                except Exception as ex:
-                    log.error(ex)
-
-        for i in items:
-            assert isinstance(i, FileItem)
-            if not self._can_search:
-                self.active_threads -= 1
-                return "Search Canceled!"
-
-            if i.file_path() in found_items:
-                continue
-
-            check_candidate(self, i._file_name, i.file_path())
-
-
-            # Search through dirs
-            if i.is_dir():
-                # progress_callback.emit(i.file_name)
-                log.debug("{} Scanning Directory!".format(i._file_name))
-                for root, dirs, files in os.walk(i.file_path()):
-                    if not self._can_search:
-                        self.active_threads -= 1
-                        return "Search Canceled!"
-
-                    # Check DIR
-                    for name in files:
-                        check_candidate(self, name, root)
-                    for name in dirs:
-                        check_candidate(self, name, root)
-
-        self.active_threads -= 1
-        return
-
-
-        if not self._can_search:
-            log.warning("Self cannot search!")
-        self.active_threads += 1
-        idx = 0
-
-        while self._can_search:
-            idx += 1
-            if idx > 3:
-                idx = 0
-            if not self._can_search:
-                self.active_threads -= 1
-                return "Search Canceled! Womp Womp!"
-            time.sleep(0.4)
-
-            progress_callback.emit(idx)
-        self.active_threads -= 1
-        return
-
-    def stop_searching(self):
-        self.cancel_search.emit()
-        return
-
-        self._can_search = False
-        self.search_cancel_btn.hide()
-        self.search_status_lbl.hide()
-        self.search_ln_edit.clear()
+    def show_hamburger_menu(self, pos):
+        self._context_menu.exec_(self.mapToGlobal(pos))
+        pass
 
     def progress_function(self, n):
         self.search_status_lbl.setText(n)
@@ -384,55 +271,34 @@ class MainWindow(QtWidgets.QMainWindow):
         print(s)
 
     def search_complete(self):
-        self.search_cancel_btn.hide()
-        self.search_status_lbl.hide()
         log.info("Search Completed")
 
-    def run_search_thread(self):
+    def run_search(self):
         """
 
         :return:
         """
-        self.search_cancel_btn.show()
-        self._thread.start()
-        return
+        if not self.search_ln_edit.text():
+            return
 
-        # if not self.search_ln_edit.text():
-        #     search_browser = self.get_active_browser().list_view
-        #     if search_browser.windowTitle() == SEARCH_TAB_TITLE:
-        #         search_browser.clear()
-        #     return
+        if not self._thread:
+            # TEST DIRECTORIES TO FEED IT
+            test_dirs = ['C:/Users/neilb/Pictures/Hikes', 'C:/Users/neilb/Pictures/ref']
 
-        print("Search token {}".format(self.search_ln_edit.text()))
-        global CAN_SAVE_SETTINGS
-        CAN_SAVE_SETTINGS = False
+            self._thread = utils.Thread(search_directory_list=test_dirs)
+            self.cancel_search.connect(self._thread.exit)
+            self.update_search.connect(self._thread.set_search_items)
+            self._thread.start()
+
+            # self._thread.finished.connect(self._thread.deleteLater)
+
+        items = self.get_file_items()
+        self._thread.set_search_items(items)
+        self._thread.set_search_string(self.search_ln_edit.text())
 
 
-        self.get_all_file_items()
 
-        self.set_browser_context(TAB_VIEW_MODE)
-        if self.get_active_browser() and self.get_active_browser().windowTitle() == SEARCH_TAB_TITLE:
-            pass
-        else:
-            self.add_browser(set_path=False)
-            self.set_active_browser_title(SEARCH_TAB_TITLE)
 
-        # Kill any current worker and wait for threads to exit.
-        self._can_search = False
-        while self.active_threads > 0:
-            print("Waiting for threads to exit")
-            time.sleep(0.1)
-        log.info("Threads Done, starting search.")
-
-        self.threadpool.clear()
-        self._can_search = True
-        self.search_cancel_btn.show()
-        self.search_status_lbl.show()
-        worker = utils.Worker(self.search_function)
-        worker.signals.result.connect(self.print_output)
-        worker.signals.finished.connect(self.search_complete)
-        worker.signals.progress.connect(self.progress_function)
-        self.threadpool.start(worker)
 
     def kill_active_threads(self):
         self._can_search = False
@@ -449,7 +315,6 @@ class MainWindow(QtWidgets.QMainWindow):
 
         rename_tray = self._pin_combo_context_menu.addAction("Rename Pin List")
         rename_tray.triggered.connect(self.rename_fav_list_dialog)
-
 
         delete_tray = self._pin_combo_context_menu.addAction("Delete Pin List")
         delete_tray.triggered.connect(self.remove_fav_list_dialog)
@@ -522,15 +387,15 @@ class MainWindow(QtWidgets.QMainWindow):
             pin_list_data.append({FAV_WIDGET_NAME: self.fav_combo.itemText(num),
                                   FAV_WIDGET_PINS: pin_list_items})
 
-        if not os.path.exists(os.path.dirname(SETTINGS_PATH)):
-            os.makedirs(os.path.dirname(SETTINGS_PATH))
+        if not os.path.exists(os.path.dirname(self._data_path)):
+            os.makedirs(os.path.dirname(self._data_path))
 
         save_data[PIN_LISTS] = pin_list_data
         save_data[BROWSERS] = browser_data
-        log.debug("Saving Pin List data {}".format(SETTINGS_PATH))
+        log.debug("Saving Pin List data {}".format(self._data_path))
         log.debug(save_data)
 
-        with open(SETTINGS_PATH, 'w') as f:
+        with open(self._data_path, 'w') as f:
             json.dump(save_data, f, indent=4, sort_keys=True)
 
     def set_browser_context(self, context=DOCK_WIDGET_VIEW_MODE):
@@ -569,8 +434,8 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def load_saved_data(self):
 
-        if os.path.exists(SETTINGS_PATH):
-            with open(SETTINGS_PATH, 'r') as f:
+        if os.path.exists(self._data_path):
+            with open(self._data_path, 'r') as f:
                 self._save_data = json.load(f)
 
         if not self._save_data:
@@ -645,8 +510,11 @@ class MainWindow(QtWidgets.QMainWindow):
         self.set_active_browser_path(item)
 
 
-    def add_browser(self, browser_data=None, set_path=True):
-        browser_window = BrowserWidget(self, browser_data=browser_data)
+    def add_browser(self, browser_data=None, set_path=True, browser_window=None):
+
+        if not browser_window:
+            browser_window = BrowserWidget(self, browser_data=browser_data)
+
         browser_window.is_active.connect(self.set_active_browser)  # Signal
         browser_window.list_view.path_changed.connect(self.set_active_browser_path)
         browser_window.table_view.path_changed.connect(self.set_active_browser_path)
@@ -715,7 +583,6 @@ class MainWindow(QtWidgets.QMainWindow):
             browser.list_view.setStyleSheet(ACTIVE_STYLE)
             browser.table_view.setStyleSheet(ACTIVE_STYLE)
 
-
     def set_active_browser_path(self, file_item: FileItem):
         log.debug("Setting Active Browser Path {}".format(file_item._full_path))
         browser = self.get_active_browser()
@@ -735,13 +602,7 @@ class MainWindow(QtWidgets.QMainWindow):
         line_edit.setPalette(p)
 
 
-    def set_drag_message(self, message):
-        self._drag_message = message
-
-    def get_drag_message(self):
-        return self._drag_message
-
-    def get_all_file_items(self):
+    def get_file_items(self):
         all_items = []
         for b in self._browser_widgets_list:
             assert isinstance(b, BrowserWidget)
@@ -750,14 +611,17 @@ class MainWindow(QtWidgets.QMainWindow):
             for i in b._view_context.get_items():
                 all_items.append(i)
         # fav widgets
-        all_items.extend(self.get_fav_items())
+        for i in range(self.fav_combo.count()):
+            widget = self.fav_combo.itemData(i)
+            assert isinstance(widget, FavWidget)
+            all_items.extend(widget.get_items())
 
         return all_items
 
     def closeEvent(self, *args):
 
         try:
-            self.kill_active_threads()
+            self._thread.exit()
         except Exception as ex:
             log.error(ex)
 

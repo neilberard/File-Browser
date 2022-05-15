@@ -414,6 +414,86 @@ class PathLineEdit(BaseFileListWidget, QtWidgets.QLineEdit):
         return self.parent()._item
 
 
+class SearchOptionsWidget(QtWidgets.QDialog):
+    def __init__(self, parent=None):
+        super().__init__(parent=parent)
+
+        self._settings_path = DATA_DIR + "_SearchOptions"
+        self.setWindowTitle("Search Options")
+        self._settings_path = os.path.join(SETTINGS_DIR, "search_options_widget.ini")
+        self._settings = QtCore.QSettings(self._settings_path, QtCore.QSettings.IniFormat)
+
+
+
+        self.setLayout(QtWidgets.QVBoxLayout())
+
+        # SearchMode
+        self._search_mode = QtWidgets.QComboBox()
+        self._search_mode.addItem("Everywhere!")
+        self._search_mode.addItem("Current Favorite List")
+        self._search_mode.addItem("Active Browser")
+
+        self.layout().addWidget(self._search_mode)
+
+        # Content File Types
+        self._file_contents_check = QtWidgets.QCheckBox("Search File Contents")
+        self.layout().addWidget(self._file_contents_check)
+
+        self._content_file_types_gbox = QtWidgets.QGroupBox()
+        self.layout().addWidget(self._content_file_types_gbox)
+        self._content_file_types_gbox.setLayout(QtWidgets.QVBoxLayout())
+
+        self._content_file_types_gbox.layout().addWidget(self._content_file_types_gbox)
+        self._content_file_types_lbl = QtWidgets.QLabel("Content File Types, IE: .txt .html .py")
+        self._content_file_types_gbox.layout().addWidget(self._content_file_types_lbl)
+        self._content_file_types_text = QtWidgets.QLineEdit()
+        self._content_file_types_gbox.layout().addWidget(self._content_file_types_text)
+
+        # Check Boxes
+        self._recursive_check = QtWidgets.QCheckBox("Search Sub-Folders")
+        self.layout().addWidget(self._recursive_check)
+
+    def file_contents_option(self):
+        return self._file_contents_check.isChecked()
+
+    def file_types(self):
+        return self._content_file_types_text.text()
+
+    def recursive_option(self):
+        return self._recursive_check.isChecked()
+
+    def showEvent(self, *args):
+        super().showEvent(*args)
+
+        self.resize(self._settings.value('size', QtCore.QSize(200, 200)))
+
+        self._file_contents_check.setChecked(bool(self._settings.value('search_file_contents_check', False)))
+        self._recursive_check.setChecked(bool(self._settings.value('recursive_check', False)))
+        self._content_file_types_text.setText(self._settings.value('content_file_type', ''))
+
+        # Mode
+        self._search_mode.setCurrentIndex(int(self._settings.value('mode_cbox', 0)))
+
+
+
+
+    def closeEvent(self, *args):
+        if CAN_SAVE_SETTINGS:
+            self._settings.setValue('search_file_contents_check', self._file_contents_check.isChecked())
+            self._settings.setValue('recursive_check', self._recursive_check.isChecked())
+            self._settings.setValue('mode_cbox', self._search_mode.currentIndex())
+
+            self._settings.setValue('content_file_type', self._content_file_types_text.text())
+            self._settings.setValue('pos', self.pos())
+            self._settings.setValue('size', self.size())
+
+        else:
+            log.warning("Cannot save fav list!")
+
+        super().closeEvent(*args)
+        pass
+
+
 
 
 
